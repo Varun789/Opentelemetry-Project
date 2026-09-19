@@ -1,7 +1,35 @@
 from flask import Flask, request, jsonify
+from opentelemetry.instrumentation.flask import FlaskInstrumentor
 import requests
 
+import logging
+# for adding metrics instrumentation
+import time
+import psutil
+
+from opentelemetry import metrics
+log = logging.getLogger(__name__)
+log.setLevel(logging.INFO)
+
+meter = metrics.get_meter(__name__)
+
+def memory_usage_callback(options):
+    print("in ngauge")
+    memory_usage = psutil.Process().memory_info().rss
+    yield metrics.Observation(memory_usage)
+
+memory_usage = meter.create_observable_gauge(
+    "gateway_memory_usage",
+    callbacks=[memory_usage_callback],
+    unit = "bytes",
+    description = "Memory usage of Pyhton gateway"
+)
+# created api duration which will be given the duration it took for request
+api_duration = meter.create_gauge("gateway_api_duration", unit= "ms")
+
 app = Flask(__name__)
+
+FlaskInstrumentor().instrument_app(app)
 
 toggle = 0
 
@@ -12,7 +40,13 @@ def index():
     url = f"http://localhost:{'3010' if toggle < 3 else '3020'}?choice={choice}"
 
     try:
+        # added time for metrics generation
+        start_time = time.time()
         response = requests.get(url)
+        duration = time.time()-start_time
+        api_duration.set(duration, {"choice": choice})
+
+        log.info("*****Called backend %s with choice %s  and it took %s ms*******",url,choice,duration)
         # Increment or reset the toggle based on its current value
         toggle = toggle + 1 if toggle < 3 else 0
         if response.status_code > 299:

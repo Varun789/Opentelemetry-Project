@@ -1,10 +1,22 @@
 const express = require("express");
 
+const { trace, context } = require("@opentelemetry/api");
+
 const router = express.Router();
 const { MongoClient } = require("mongodb");
+// adding manual instrumnetation so need api
+const pkg = require("../package.json");
+// created tracer
 
 const uri = "mongodb://localhost";
 const client = new MongoClient(uri);
+
+// connect once for newer version
+client
+  .connect()
+  .then(() => console.log("connected to mongodb"))
+  .catch((err) => console.error("MongoDB connection failed", err));
+// bring pakage
 
 // Fibonacci function to simulate delay
 function fibonacci(n) {
@@ -17,8 +29,9 @@ function fibonacci(n) {
 /* GET home page. */
 router.get("/", async (req, res, next) => {
   try {
-    await client.connect({ useNewUrlParser: true });
-
+    // commented for newer version
+    // await client.connect({ useNewUrlParser: true });
+    const requestContext = context.active();
     const database = client.db("voting");
     const votes = database.collection("votes");
 
@@ -33,13 +46,26 @@ router.get("/", async (req, res, next) => {
     const spaces = await votes.countDocuments({ choice: "spaces" });
     const tabs = await votes.countDocuments({ choice: "tabs" });
 
-    if(Math.random() < 0.5) {
-      fibonacci(40); 
-    }
+    // add the tracer
+
+    // if (Math.random() < 0.5) {
+    const tracer = trace.getTracer(pkg.name, pkg.version);
+    tracer.startActiveSpan("fibonacci_trace", {}, requestContext, (span) => {
+      try {
+        console.log("in tracer");
+        fibonacci(20);
+      } catch (err) {
+        span.recordException(err);
+        span.setStatus({ code: 2 }); // Set error status if it blows up
+      } finally {
+        span.end();
+      }
+    });
+    // }
 
     return res.json({
       spaces,
-      tabs,
+      tabs
     });
   } catch (err) {
     return next(err);
